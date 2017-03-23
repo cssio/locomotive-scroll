@@ -31,26 +31,34 @@ export default class {
 
         this.requestId = undefined;
 
+        this.resize = new Resize();
+
+        // Add element event
+        $document.on('addElement.Scroll', (event) => this.addElementsWithCallbacks(event.selector, event.callbacks));
+
+        // Render event
+        $document.on('render.Scroll', () => this.renderAnimations(false));
+
+        // Update event
+        $document.on('update.Scroll', (event, options) => this.updateElements(options));
+
+        // ScrollTo event
+        $document.on('scrollTo.Scroll', (options) => this.scrollTo(options.value));
+
+        // Resize event
+        this.resize.on('resize:end', () => this.updateElements());
+
         this.init();
     }
 
     /**
-     * Initialize scrolling animations
+     * Basic initialization of scrolling animations.
      */
     init(){
         this.addElements();
 
-        var resize = new Resize();
-        resize.on('resize:end', () => this.updateElements());
-
-        $document.on('scrollTo.Scroll',(options)=>this.scrollTo(options.value));
-        // Update event
-        $document.on('update.Scroll', (event, options) => this.updateElements(options));
-        // Render event
-        $document.on('render.Scroll', () => this.renderAnimations(false));
-
         // Rebuild event
-        $document.on('rebuild.Scroll', () =>{
+        $document.on('rebuild.Scroll', () => {
             this.scrollTo(0);
             this.updateElements();
         });
@@ -68,33 +76,37 @@ export default class {
         var len = $elements.length;
 
         for (; i < len; i ++) {
-            let $element = $elements.eq(i);
-            let elementTarget = $element.data('target');
-            let $target = (elementTarget) ? $(elementTarget) : $element;
-            let elementOffset = $target.offset().top;
-            let elementLimit = elementOffset + $element.outerHeight();
-
-            // If elements loses its animation after scrolling past it
-            let elementRepeat = (typeof $element.data('repeat') === 'string');
-
-            let elementInViewClass = $element.data('inview-class');
-            if (typeof elementInViewClass === 'undefined') {
-                elementInViewClass = 'is-show';
-            }
+            let model = this.getElementModel($elements.eq(i));
 
             // Don't add element if it already has its in view class and doesn't repeat
-            if (elementRepeat || !$element.hasClass(elementInViewClass)) {
-                this.animatedElements[i] = {
-                    $element: $element,
-                    offset: Math.round(elementOffset),
-                    repeat: elementRepeat,
-                    limit: elementLimit,
-                    inViewClass: elementInViewClass
-                }
+            if (model.repeat || !model.$element.hasClass(model.inViewClass)) {
+                this.animatedElements.push(model);
             }
         };
 
         this.requestId = window.requestAnimationFrame(() => this.renderAnimations());
+    }
+
+    /**
+     * Manually add one or more elements to the animated elements array
+     * @param {String} selector
+     * @param {Object} callbacks
+     * @see https://github.com/jeremenichelli/hunt/blob/master/src/hunt.js
+     */
+    addElementsWithCallbacks(selector, callbacks) {
+        var $elements = $(selector);
+        var i = 0;
+        var len = $elements.length;
+
+        // Add elements to animated elements array
+        for (; i < len; i++) {
+            let model = this.getElementModel($elements.eq(i));
+            model.callbacks = callbacks;
+
+            this.animatedElements.push(model);
+        }
+
+        i = len = null;
     }
 
     /**
@@ -108,7 +120,7 @@ export default class {
             let element = this.animatedElements[i];
 
             // If the element's visibility must not be manipulated any further, remove it from the list
-            if (this.toggleElementClasses(element, i)) {
+            if (this.validateElementVisibility(element, i)) {
                 removeIndexes.push(i);
             }
         }
@@ -118,6 +130,40 @@ export default class {
         while (i--) {
             this.animatedElements.splice(removeIndexes[i], 1);
         }
+    }
+
+    /**
+     * Pseudo constructor for element that is animated/transformed.
+     * @param  {jQueryNode} $element
+     * @return {Object}
+     */
+    getElementModel($element) {
+        var elementTarget = $element.data('target');
+        var $target = (elementTarget) ? $(elementTarget) : $element;
+        var elementOffset = $target.offset().top;
+        var elementLimit = elementOffset + $element.outerHeight();
+
+        // If elements loses its animation after scrolling past it
+        var elementRepeat = (typeof $element.data('repeat') === 'string');
+
+        var elementInViewClass = $element.data('inview-class');
+        if (typeof elementInViewClass === 'undefined') {
+            elementInViewClass = 'is-show';
+        }
+
+        return {
+            $element: $element,
+            callbacks: {
+                // noop methods
+                enter: function() {},
+                out: function() {}
+            },
+            inViewClass: elementInViewClass,
+            offset: Math.round(elementOffset),
+            limit: elementLimit,
+            repeat: elementRepeat,
+            $target: $target
+        };
     }
 
     /**
@@ -144,38 +190,6 @@ export default class {
         this.animateElements();
 
         this.requestId = window.requestAnimationFrame(() => this.renderAnimations());
-    }
-
-    /**
-     * Toggle classes on an element if it's visible.
-     *
-     * @param  {object}      element Current element to test
-     * @param  {int}         index   Index of the element within it's container
-     * @return {boolean}             Wether the item must be removed from its container
-     */
-    toggleElementClasses(element, index) {
-        var removeFromContainer = false;
-
-        if (typeof element !== 'undefined') {
-            // Find the bottom edge of the scroll container
-            var scrollBottom = this.scroll.y + this.windowHeight;
-
-            // Define if the element is inView
-            var inView = (scrollBottom >= element.offset && this.scroll.y <= element.limit);
-
-            // Add class if inView, remove if not
-            if (inView) {
-                element.$element.addClass(element.inViewClass);
-
-                if (!element.repeat){
-                    removeFromContainer = true;
-                }
-            } else if (element.repeat) {
-                element.$element.removeClass(element.inViewClass);
-            }
-        }
-
-        return removeFromContainer;
     }
 
     /**
@@ -213,9 +227,45 @@ export default class {
     }
 
     /**
+     * Validate the visibility of an element and perform various operations related to its state.
+     *
+     * @param  {object}      element Current element to test
+     * @param  {int}         index   Index of the element within it's container
+     * @return {boolean}             Wether the item must be removed from its container
+     */
+    validateElementVisibility(element, index) {
+        var removeFromContainer = false;
+
+        if (typeof element !== 'undefined') {
+            // Find the bottom edge of the scroll container
+            var scrollBottom = this.scroll.y + this.windowHeight;
+
+            // Define if the element is inView
+            var inView = (scrollBottom >= element.offset && this.scroll.y <= element.limit);
+
+            // Add class if inView, remove if not
+            if (inView) {
+                element.$element.addClass(element.inViewClass);
+                element.callbacks.enter.apply(element);
+
+                if (!element.repeat){
+                    removeFromContainer = true;
+                }
+            } else if (element.repeat) {
+                element.$element.removeClass(element.inViewClass);
+                element.callbacks.out.apply(element);
+            }
+        }
+
+        return removeFromContainer;
+    }
+
+    /**
      * Destroy
      */
     destroy() {
+        this.resize.destroy();
+        $document.off('.Scroll');
         this.$el.off('.Scroll');
         window.cancelAnimationFrame(this.requestId);
         this.requestId = undefined;

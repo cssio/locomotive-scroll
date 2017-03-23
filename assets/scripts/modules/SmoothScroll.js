@@ -44,26 +44,14 @@ export default class extends Scroll {
             this.updateElements();
         });
 
-        // Update event
-        $document.on('update.Scroll', () => this.updateElements());
-
-        // Render event
-        $document.on('render.Scroll', () => this.renderAnimations(false));
-
         // Scrollto button event
-        $('.js-scrollto').on('click.SmoothScroll', (event) => {
+        $('.js-scrollto').on('click.Scroll', (event) => {
             event.preventDefault();
             this.scrollTo($(event.currentTarget));
         });
 
         // Setup done
-        $document.trigger({
-            type: 'isReady.SmoothScroll'
-        });
-
-        // Resize event
-        var resize = new Resize();
-        resize.on('resize:end', () => this.updateElements());
+        $document.triggerHandler('isReady.Scroll');
     }
 
     /**
@@ -79,60 +67,50 @@ export default class extends Scroll {
         var len = $elements.length;
 
         for (; i < len; i ++) {
-            let $element = $elements.eq(i);
-            let elementSpeed = isNumeric($element.data('speed')) ? parseInt($element.data('speed')) / 10 : false
-            let elementPosition = $element.data('position');
-            let elementTarget = $element.data('target');
-            let elementHorizontal = $element.data('horizontal');
-
-            let $target = (elementTarget) ? $(elementTarget) : $element;
-            let elementOffset = $target.offset().top + this.scrollbar.scrollTop;
-            let elementLimit = elementOffset + $target.outerHeight();
-
-            // If elements stays visible after scrolling past it
-            let elementRepeat = (typeof $element.data('repeat') === 'string');
-
-            let elementInViewClass = $element.data('inview-class');
-            if (typeof elementInViewClass === 'undefined') {
-                elementInViewClass = 'is-show';
-            }
-
-            if (!elementTarget && $element.data('transform')) {
-                elementOffset -= parseFloat($element.data('transform').y);
-            }
-
-            var newElement = {};
+            let model = this.getElementModel($elements.eq(i));
 
             // For parallax animated elements
-            if (elementSpeed !== false) {
-                let elementPosition = $element.data('position');
-                let elementHorizontal = $element.data('horizontal');
-                let elementMiddle = ((elementLimit - elementOffset) / 2) + elementOffset;
+            if (model.speed !== false) {
+                model.middle = ((model.limit - model.offsetRaw) / 2) + model.offsetRaw;
+                model.offset = model.offsetRaw;
 
-                newElement = {
-                    $element: $element,
-                    horizontal: elementHorizontal,
-                    inViewClass: elementInViewClass,
-                    limit: elementLimit,
-                    middle: elementMiddle,
-                    offset: elementOffset,
-                    repeat: elementRepeat,
-                    position: elementPosition,
-                    speed: elementSpeed
-                };
-                this.parallaxElements.push(newElement);
+                this.parallaxElements.push(model);
             } else {
-                newElement = {
-                    $element: $element,
-                    inViewClass: elementInViewClass,
-                    limit: elementLimit,
-                    offset: Math.round(elementOffset),
-                    repeat: elementRepeat
-                };
-
-                this.animatedElements.push(newElement);
+                // Don't add element if it already has its in view class and doesn't repeat
+                if (model.repeat || !model.$element.hasClass(model.inViewClass)) {
+                    this.animatedElements.push(model);
+                }
             }
-        };
+        }
+    }
+
+    /**
+     * Pseudo constructor for element that is animated/transformed.
+     * @param  {jQueryNode} $element
+     * @return {Object}
+     */
+    getElementModel($element) {
+        var model = super.getElementModel($element);
+
+        var elementSpeed = isNumeric($element.data('speed')) ? parseInt($element.data('speed')) / 10 : false
+        var elementPosition = $element.data('position');
+        var elementHorizontal = $element.data('horizontal');
+
+        var elementOffset = model.$target.offset().top + this.scrollbar.scrollTop;
+        var elementLimit = elementOffset + model.$target.outerHeight();
+
+        if (!model.$target && $element.data('transform')) {
+            elementOffset -= parseFloat($element.data('transform').y);
+        }
+
+        return $.extend({}, model, {
+            horizontal: elementHorizontal,
+            limit: elementLimit,
+            offset: Math.round(elementOffset),
+            offsetRaw: elementOffset,
+            position: elementPosition,
+            speed: elementSpeed
+        });
     }
 
     /**
@@ -279,7 +257,7 @@ export default class extends Scroll {
                     curEl.$element.removeClass('is-inview');
                 }
 
-                this.toggleElementClasses(curEl, i);
+                this.validateElementVisibility(curEl, i);
 
                 if (isFirstCall && !inView && curEl.speed) {
                     // Different calculations if it is the first call and the item is not in the view
@@ -320,25 +298,29 @@ export default class extends Scroll {
 
     /**
      * Update elements and recalculate all the positions on the page
+     *
+     * @param {object} options
      */
-    updateElements()
-    {
+    updateElements(options) {
+        options = options || {};
+
         this.scrollbar.update();
         this.windowHeight = $window.height();
         this.windowMiddle = this.windowHeight / 2;
         this.setScrollbarLimit();
         this.addElements();
-        this.transformElements(true);
+
+        if (typeof options.callback === 'function') {
+            options.callback();
+        }
     }
 
     /**
      * Destroy
      */
     destroy() {
-        super.destroy();
-        this.$el.off('.SmoothScroll');
-        this.$el.off('.Scroll');
         this.parallaxElements = undefined;
         this.scrollbar.destroy();
+        super.destroy();
     }
 }
